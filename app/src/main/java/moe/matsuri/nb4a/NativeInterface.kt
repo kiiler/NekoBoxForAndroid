@@ -24,6 +24,9 @@ import libcore.BoxPlatformInterface
 import libcore.Libcore
 import libcore.NB4AInterface
 import java.net.InetSocketAddress
+import java.net.NetworkInterface
+import org.json.JSONArray
+import org.json.JSONObject
 
 class NativeInterface : BoxPlatformInterface, NB4AInterface {
 
@@ -79,6 +82,58 @@ class NativeInterface : BoxPlatformInterface, NB4AInterface {
             app.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         val connectionInfo = wifiManager.connectionInfo
         return "${connectionInfo.ssid},${connectionInfo.bssid}"
+    }
+
+    override fun networkInterfaces(): String {
+        val result = JSONArray()
+        val interfaces = NetworkInterface.getNetworkInterfaces() ?: return result.toString()
+        while (interfaces.hasMoreElements()) {
+            val networkInterface = interfaces.nextElement()
+            val loopback = runCatching { networkInterface.isLoopback }.getOrDefault(false)
+            val pointToPoint = runCatching { networkInterface.isPointToPoint }.getOrDefault(false)
+            val up = runCatching { networkInterface.isUp }.getOrDefault(false)
+            val addresses = JSONArray()
+            runCatching {
+                networkInterface.interfaceAddresses.forEach { interfaceAddress ->
+                    val hostAddress = interfaceAddress.address?.hostAddress
+                        ?.substringBefore('%')
+                        ?: return@forEach
+                    addresses.put("$hostAddress/${interfaceAddress.networkPrefixLength.toInt()}")
+                }
+            }
+            val hardwareAddress = runCatching {
+                networkInterface.hardwareAddress?.joinToString(":") {
+                    "%02x".format(it.toInt() and 0xff)
+                }.orEmpty()
+            }.getOrDefault("")
+            val name = networkInterface.name.orEmpty()
+            val type = when {
+                name.startsWith("wlan") || name.startsWith("wifi") -> 0
+                name.startsWith("rmnet") || name.startsWith("ccmni") ||
+                    name.startsWith("pdp") || name.startsWith("wwan") -> 1
+                name.startsWith("eth") || name.startsWith("en") -> 2
+                else -> 3
+            }
+            result.put(
+                JSONObject()
+                    .put("index", networkInterface.index)
+                    .put("mtu", runCatching { networkInterface.mtu }.getOrDefault(0))
+                    .put("name", name)
+                    .put("hardware_address", hardwareAddress)
+                    .put("addresses", addresses)
+                    .put("up", up)
+                    .put("running", up)
+                    .put("broadcast", !loopback && !pointToPoint)
+                    .put("loopback", loopback)
+                    .put("point_to_point", pointToPoint)
+                    .put("multicast", runCatching { networkInterface.supportsMulticast() }.getOrDefault(false))
+                    .put("type", type)
+                    .put("dns_servers", JSONArray())
+                    .put("expensive", type == 1)
+                    .put("constrained", false)
+            )
+        }
+        return result.toString()
     }
 
     override fun sendNotification(

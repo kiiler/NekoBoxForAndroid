@@ -2,19 +2,21 @@ package libcore
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"libcore/procfs"
 	"log"
+	"net"
 	"net/netip"
 	"strings"
 	"syscall"
 
 	"github.com/matsuridayo/libneko/neko_log"
 	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
 	sblog "github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	tun "github.com/sagernet/sing-tun"
+	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	N "github.com/sagernet/sing/common/network"
@@ -88,11 +90,93 @@ func (w *boxPlatformInterfaceWrapper) CreateDefaultInterfaceMonitor(l logger.Log
 }
 
 func (w *boxPlatformInterfaceWrapper) UsePlatformNetworkInterfaces() bool {
-	return false
+	return true
 }
 
 func (w *boxPlatformInterfaceWrapper) NetworkInterfaces() ([]adapter.NetworkInterface, error) {
-	return nil, errors.New("wtf")
+	return parsePlatformNetworkInterfaces(intfBox.NetworkInterfaces())
+}
+
+type platformNetworkInterface struct {
+	Index           int      `json:"index"`
+	MTU             int      `json:"mtu"`
+	Name            string   `json:"name"`
+	HardwareAddress string   `json:"hardware_address"`
+	Addresses       []string `json:"addresses"`
+	Up              bool     `json:"up"`
+	Running         bool     `json:"running"`
+	Broadcast       bool     `json:"broadcast"`
+	Loopback        bool     `json:"loopback"`
+	PointToPoint    bool     `json:"point_to_point"`
+	Multicast       bool     `json:"multicast"`
+	Type            uint8    `json:"type"`
+	DNSServers      []string `json:"dns_servers"`
+	Expensive       bool     `json:"expensive"`
+	Constrained     bool     `json:"constrained"`
+}
+
+func parsePlatformNetworkInterfaces(raw string) ([]adapter.NetworkInterface, error) {
+	var source []platformNetworkInterface
+	if err := json.Unmarshal([]byte(raw), &source); err != nil {
+		return nil, fmt.Errorf("decode Android network interfaces: %w", err)
+	}
+	interfaces := make([]adapter.NetworkInterface, 0, len(source))
+	for _, sourceInterface := range source {
+		addresses := make([]netip.Prefix, 0, len(sourceInterface.Addresses))
+		for _, address := range sourceInterface.Addresses {
+			prefix, err := netip.ParsePrefix(address)
+			if err != nil {
+				return nil, fmt.Errorf("decode Android network interface %s address %q: %w", sourceInterface.Name, address, err)
+			}
+			addresses = append(addresses, prefix)
+		}
+		var hardwareAddress net.HardwareAddr
+		if sourceInterface.HardwareAddress != "" {
+			parsedAddress, err := net.ParseMAC(sourceInterface.HardwareAddress)
+			if err != nil {
+				return nil, fmt.Errorf("decode Android network interface %s hardware address: %w", sourceInterface.Name, err)
+			}
+			hardwareAddress = parsedAddress
+		}
+		var flags net.Flags
+		if sourceInterface.Up {
+			flags |= net.FlagUp
+		}
+		if sourceInterface.Running {
+			flags |= net.FlagRunning
+		}
+		if sourceInterface.Broadcast {
+			flags |= net.FlagBroadcast
+		}
+		if sourceInterface.Loopback {
+			flags |= net.FlagLoopback
+		}
+		if sourceInterface.PointToPoint {
+			flags |= net.FlagPointToPoint
+		}
+		if sourceInterface.Multicast {
+			flags |= net.FlagMulticast
+		}
+		interfaceType := C.InterfaceType(sourceInterface.Type)
+		if interfaceType > C.InterfaceTypeOther {
+			interfaceType = C.InterfaceTypeOther
+		}
+		interfaces = append(interfaces, adapter.NetworkInterface{
+			Interface: control.Interface{
+				Index:        sourceInterface.Index,
+				MTU:          sourceInterface.MTU,
+				Name:         sourceInterface.Name,
+				HardwareAddr: hardwareAddress,
+				Flags:        flags,
+				Addresses:    addresses,
+			},
+			Type:        interfaceType,
+			DNSServers:  sourceInterface.DNSServers,
+			Expensive:   sourceInterface.Expensive,
+			Constrained: sourceInterface.Constrained,
+		})
+	}
+	return interfaces, nil
 }
 
 func (w *boxPlatformInterfaceWrapper) NetworkExtensionIncludeAllNetworks() bool {
