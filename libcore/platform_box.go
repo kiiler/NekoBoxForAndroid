@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/matsuridayo/libneko/neko_log"
@@ -22,9 +23,18 @@ import (
 	N "github.com/sagernet/sing/common/network"
 )
 
-var boxPlatformInterfaceInstance adapter.PlatformInterface = &boxPlatformInterfaceWrapper{}
+var _ adapter.PlatformInterface = (*boxPlatformInterfaceWrapper)(nil)
 
-type boxPlatformInterfaceWrapper struct{}
+type boxPlatformInterfaceWrapper struct {
+	access         sync.Mutex
+	pendingMonitor *platformDefaultInterfaceMonitor
+}
+
+type platformTunNameResolver func(fd int) (string, error)
+
+func newBoxPlatformInterface() *boxPlatformInterfaceWrapper {
+	return new(boxPlatformInterfaceWrapper)
+}
 
 func (w *boxPlatformInterfaceWrapper) ReadWIFIState() adapter.WIFIState {
 	state := strings.Split(intfBox.WIFIState(), ",")
@@ -35,7 +45,18 @@ func (w *boxPlatformInterfaceWrapper) ReadWIFIState() adapter.WIFIState {
 }
 
 func (w *boxPlatformInterfaceWrapper) Initialize(n adapter.NetworkManager) error {
+	w.bindNetwork(n)
 	return nil
+}
+
+func (w *boxPlatformInterfaceWrapper) bindNetwork(n platformInterfaceState) {
+	w.access.Lock()
+	monitor := w.pendingMonitor
+	w.pendingMonitor = nil
+	w.access.Unlock()
+	if monitor != nil {
+		monitor.setNetwork(n)
+	}
 }
 
 func (w *boxPlatformInterfaceWrapper) UsePlatformAutoDetectInterfaceControl() bool {
@@ -72,9 +93,33 @@ func (w *boxPlatformInterfaceWrapper) OpenInterface(options *tun.Options, platfo
 	if err != nil {
 		return nil, fmt.Errorf("syscall.Dup: %v", err)
 	}
+	if err = applyPlatformTunName(options, tunFd, getPlatformTunName); err != nil {
+		_ = syscall.Close(tunFd)
+		return nil, err
+	}
 	//
 	options.FileDescriptor = int(tunFd)
-	return tun.New(*options)
+	tunInterface, err := tun.New(*options)
+	if err != nil {
+		_ = syscall.Close(tunFd)
+		return nil, err
+	}
+	return tunInterface, nil
+}
+
+func applyPlatformTunName(options *tun.Options, tunFD int, resolveName platformTunNameResolver) error {
+	interfaceName, err := resolveName(tunFD)
+	if err != nil {
+		return fmt.Errorf("query Android TUN interface name: %w", err)
+	}
+	if interfaceName == "" {
+		return fmt.Errorf("query Android TUN interface name: empty name")
+	}
+	options.Name = interfaceName
+	if options.InterfaceMonitor != nil {
+		options.InterfaceMonitor.RegisterMyInterface(interfaceName)
+	}
+	return nil
 }
 
 func (w *boxPlatformInterfaceWrapper) CloseTun() error {
@@ -86,7 +131,12 @@ func (w *boxPlatformInterfaceWrapper) UsePlatformDefaultInterfaceMonitor() bool 
 }
 
 func (w *boxPlatformInterfaceWrapper) CreateDefaultInterfaceMonitor(l logger.Logger) tun.DefaultInterfaceMonitor {
-	return &interfaceMonitorStub{}
+	monitor := newPlatformDefaultInterfaceMonitor(nil, intfBox)
+	monitor.logger = l
+	w.access.Lock()
+	w.pendingMonitor = monitor
+	w.access.Unlock()
+	return monitor
 }
 
 func (w *boxPlatformInterfaceWrapper) UsePlatformNetworkInterfaces() bool {
@@ -113,6 +163,8 @@ type platformNetworkInterface struct {
 	DNSServers      []string `json:"dns_servers"`
 	Expensive       bool     `json:"expensive"`
 	Constrained     bool     `json:"constrained"`
+	Underlying      *bool    `json:"underlying"`
+	VPN             bool     `json:"vpn"`
 }
 
 func parsePlatformNetworkInterfaces(raw string) ([]adapter.NetworkInterface, error) {
@@ -122,13 +174,24 @@ func parsePlatformNetworkInterfaces(raw string) ([]adapter.NetworkInterface, err
 	}
 	interfaces := make([]adapter.NetworkInterface, 0, len(source))
 	for _, sourceInterface := range source {
+		if !sourceInterface.Up || sourceInterface.Loopback || sourceInterface.VPN ||
+			(sourceInterface.Underlying != nil && !*sourceInterface.Underlying) {
+			continue
+		}
 		addresses := make([]netip.Prefix, 0, len(sourceInterface.Addresses))
+		ownTunnel := false
 		for _, address := range sourceInterface.Addresses {
 			prefix, err := netip.ParsePrefix(address)
 			if err != nil {
 				return nil, fmt.Errorf("decode Android network interface %s address %q: %w", sourceInterface.Name, address, err)
 			}
+			if isNekoTunnelAddress(prefix.Addr()) {
+				ownTunnel = true
+			}
 			addresses = append(addresses, prefix)
+		}
+		if ownTunnel {
+			continue
 		}
 		var hardwareAddress net.HardwareAddr
 		if sourceInterface.HardwareAddress != "" {
@@ -177,6 +240,11 @@ func parsePlatformNetworkInterfaces(raw string) ([]adapter.NetworkInterface, err
 		})
 	}
 	return interfaces, nil
+}
+
+func isNekoTunnelAddress(address netip.Addr) bool {
+	return address == netip.MustParseAddr("172.19.0.1") ||
+		address == netip.MustParseAddr("fdfe:dcba:9876::1")
 }
 
 func (w *boxPlatformInterfaceWrapper) NetworkExtensionIncludeAllNetworks() bool {

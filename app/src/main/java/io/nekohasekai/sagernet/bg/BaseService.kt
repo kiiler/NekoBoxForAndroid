@@ -49,7 +49,9 @@ class BaseService {
         val receiver = broadcastReceiver { ctx, intent ->
             when (intent.action) {
                 Intent.ACTION_SHUTDOWN -> service.persistStats()
-                Action.RELOAD -> service.reload()
+                Action.RELOAD -> service.reload(
+                    intent.getBooleanExtra(Action.EXTRA_FORCE_FULL_RELOAD, false)
+                )
                 // Action.SWITCH_WAKE_LOCK -> runOnDefaultDispatcher { service.switchWakeLock() }
                 PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED -> {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -79,7 +81,8 @@ class BaseService {
         var closeReceiverRegistered = false
 
         val binder = Binder(this)
-        var connectingJob: Job? = null
+        internal val connectingJob = PublishedJob()
+        internal val stopIntent = StopIntent()
 
         fun changeState(s: State, msg: String? = null) {
             if (state == s && msg == null) return
@@ -177,11 +180,30 @@ class BaseService {
         fun onBind(intent: Intent): IBinder? =
             if (intent.action == Action.SERVICE) data.binder else null
 
-        fun reload() {
+        fun reload(forceFullReload: Boolean = false) {
+            fun preserveRestartIntent() {
+                if (data.stopIntent.updateActive(restart = true)) return
+                // Cleanup completed after the state check. Re-read state so a service that
+                // has not restarted yet is not put through an unnecessary second cleanup.
+                val currentState = data.state
+                when {
+                    currentState == State.Stopped -> startRunner()
+                    currentState == State.Stopping || currentState.canStop -> {
+                        stopRunner(restart = true)
+                    }
+                    else -> Logs.w("Illegal state $currentState when retrying reload")
+                }
+            }
+
             if (DataStore.selectedProxy == 0L) {
                 stopRunner(false, (this as Context).getString(R.string.profile_empty))
+                return
             }
-            if (canReloadSelector()) {
+            if (data.state == State.Stopping) {
+                preserveRestartIntent()
+                return
+            }
+            if (canReloadSelector(forceFullReload)) {
                 val ent = SagerDatabase.proxyDao.getById(DataStore.selectedProxy)
                 val tag = data.proxy!!.config.profileTagMap[ent?.id] ?: ""
                 if (tag.isNotBlank() && ent != null) {
@@ -195,20 +217,24 @@ class BaseService {
             val s = data.state
             when {
                 s == State.Stopped -> startRunner()
+                s == State.Stopping -> preserveRestartIntent()
                 s.canStop -> stopRunner(true)
                 else -> Logs.w("Illegal state $s when invoking use")
             }
         }
 
-        fun canReloadSelector(): Boolean {
-            if ((data.proxy?.config?.selectorGroupId ?: -1L) < 0) return false
+        fun canReloadSelector(forceFullReload: Boolean): Boolean {
+            if (forceFullReload) return false
+            val runningProxy = data.proxy ?: return false
+            if (runningProxy.config.selectorGroupId < 0) return false
             val ent = SagerDatabase.proxyDao.getById(DataStore.selectedProxy) ?: return false
             val tmpBox = ProxyInstance(ent)
             tmpBox.buildConfigTmp()
-            if (tmpBox.lastSelectorGroupId == data.proxy?.lastSelectorGroupId) {
-                return true
-            }
-            return false
+            return ReloadPolicy.decide(
+                forceFullReload = forceFullReload,
+                runningSelectorGroupId = runningProxy.lastSelectorGroupId,
+                candidateSelectorGroupId = tmpBox.lastSelectorGroupId,
+            ) == ReloadMode.SELECTOR_HOT_SWAP
         }
 
         suspend fun startProcesses() {
@@ -222,45 +248,87 @@ class BaseService {
         }
 
         fun killProcesses() {
-            data.proxy?.close()
-            wakeLock?.apply {
-                release()
-                wakeLock = null
+            var failure: Throwable? = null
+            try {
+                data.proxy?.close()
+            } catch (error: Throwable) {
+                failure = error
             }
-            runOnDefaultDispatcher {
-                DefaultNetworkListener.stop(this)
+            val lock = wakeLock
+            wakeLock = null
+            try {
+                lock?.release()
+            } catch (error: Throwable) {
+                failure?.addSuppressed(error) ?: run { failure = error }
+            }
+            failure?.let { throw it }
+        }
+
+        suspend fun killProcessesAndWaitForNetworkListener() {
+            try {
+                killProcesses()
+            } finally {
+                try {
+                    DefaultNetworkListener.stop(this)
+                } finally {
+                    SagerNet.underlyingNetwork = null
+                    upstreamInterfaceName = null
+                }
             }
         }
 
         fun stopRunner(restart: Boolean = false, msg: String? = null) {
             DataStore.baseService = null
-            DataStore.vpnService = null
 
-            if (data.state == State.Stopping) return
-            data.notification?.destroy()
+            if (!data.stopIntent.request(restart)) return
+            val notification = data.notification
             data.notification = null
             this as Service
 
             data.changeState(State.Stopping)
 
             runOnMainDispatcher {
-                data.connectingJob?.cancelAndJoin() // ensure stop connecting first
-                // we use a coroutineScope here to allow clean-up in parallel
-                coroutineScope {
-                    killProcesses()
-                    val data = data
-                    if (data.closeReceiverRegistered) {
-                        unregisterReceiver(data.receiver)
-                        data.closeReceiverRegistered = false
-                    }
-                    data.proxy = null
+                var failure: Throwable? = null
+                fun recordFailure(error: Throwable) {
+                    failure?.addSuppressed(error) ?: run { failure = error }
                 }
 
-                // change the state
-                data.changeState(State.Stopped, msg)
-                // stop the service if nothing has bound to it
-                if (restart) startRunner() else {
-                    stopSelf()
+                try {
+                    notification?.destroy()
+                } catch (error: Throwable) {
+                    recordFailure(error)
+                }
+                try {
+                    data.connectingJob.cancelAndJoin() // ensure stop connecting first
+                } catch (error: Throwable) {
+                    recordFailure(error)
+                }
+                try {
+                    killProcessesAndWaitForNetworkListener()
+                } catch (error: Throwable) {
+                    recordFailure(error)
+                } finally {
+                    DataStore.vpnService = null
+                }
+                if (data.closeReceiverRegistered) {
+                    try {
+                        unregisterReceiver(data.receiver)
+                    } catch (error: Throwable) {
+                        recordFailure(error)
+                    } finally {
+                        data.closeReceiverRegistered = false
+                    }
+                }
+                data.proxy = null
+                failure?.let { Logs.w("Failed to close service resources", it) }
+
+                data.stopIntent.complete { restartAfterStop ->
+                    // change the state
+                    data.changeState(State.Stopped, msg)
+                    // stop the service if nothing has bound to it
+                    if (restartAfterStop) startRunner() else {
+                        stopSelf()
+                    }
                 }
             }
         }
@@ -273,20 +341,20 @@ class BaseService {
         var upstreamInterfaceName: String?
 
         suspend fun preInit() {
-            DefaultNetworkListener.start(this) {
-                SagerNet.connectivity.getLinkProperties(it)?.also { link ->
-                    SagerNet.underlyingNetwork = it
-                    DataStore.vpnService?.updateUnderlyingNetwork()
-                    //
-                    val oldName = upstreamInterfaceName
-                    if (oldName != link.interfaceName) {
-                        upstreamInterfaceName = link.interfaceName
-                    }
-                    if (oldName != null && upstreamInterfaceName != null && oldName != upstreamInterfaceName) {
-                        Logs.d("Network changed: $oldName -> $upstreamInterfaceName")
-                        if (DataStore.networkChangeResetConnections) {
-                            Libcore.resetAllConnections(true)
-                        }
+            DefaultNetworkListener.start(this) { network ->
+                SagerNet.underlyingNetwork = network
+                DataStore.vpnService?.updateUnderlyingNetwork(network = network)
+                if (network == null) {
+                    upstreamInterfaceName = null
+                    return@start
+                }
+                val oldName = upstreamInterfaceName
+                upstreamInterfaceName = SagerNet.connectivity
+                    .getLinkProperties(network)?.interfaceName
+                if (oldName != null && upstreamInterfaceName != null && oldName != upstreamInterfaceName) {
+                    Logs.d("Network changed: $oldName -> $upstreamInterfaceName")
+                    if (DataStore.networkChangeResetConnections) {
+                        Libcore.resetAllConnections(true)
                     }
                 }
             }
@@ -356,7 +424,7 @@ class BaseService {
             }
 
             data.changeState(State.Connecting)
-            runOnMainDispatcher {
+            data.connectingJob.launch(data.binder, Dispatchers.Main.immediate) {
                 try {
                     data.notification = createNotification(ServiceNotification.genTitle(profile))
 
@@ -392,8 +460,6 @@ class BaseService {
                     stopRunner(
                         false, "${getString(R.string.service_failed)}: ${exc.readableMessage}"
                     )
-                } finally {
-                    data.connectingJob = null
                 }
             }
             return Service.START_NOT_STICKY

@@ -200,7 +200,9 @@ class ConfigurationFragment @JvmOverloads constructor(
                 if (updatingTailscaleSwitch) return@setOnCheckedChangeListener
                 DataStore.tailscaleEnabled = enabled
                 updateTailscaleSummary()
-                if (DataStore.serviceState.started) SagerNet.reloadService()
+                if (DataStore.serviceState.started) {
+                    SagerNet.reloadService(forceFullReload = true)
+                }
             }
             tailscalePanel.setOnClickListener {
                 (activity as? MainActivity)?.displayFragmentWithId(R.id.nav_settings)

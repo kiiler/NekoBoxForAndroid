@@ -52,9 +52,22 @@ class VpnService : BaseVpnService(),
 
     @Suppress("EXPERIMENTAL_API_USAGE")
     override fun killProcesses() {
-        conn?.close()
+        var failure: Throwable? = null
+        try {
+            // Keep the Android VPN descriptor alive while sing-box closes its TUN,
+            // DNS transports, and the embedded Tailscale endpoint.
+            super.killProcesses()
+        } catch (error: Throwable) {
+            failure = error
+        }
+        val connection = conn
         conn = null
-        super.killProcesses()
+        try {
+            connection?.close()
+        } catch (error: Throwable) {
+            failure?.addSuppressed(error) ?: run { failure = error }
+        }
+        failure?.let { throw it }
     }
 
     override fun onBind(intent: Intent) = when (intent.action) {
@@ -96,16 +109,26 @@ class VpnService : BaseVpnService(),
             .setSession(getString(R.string.app_name))
             .setMtu(DataStore.mtu)
         val ipv6Mode = DataStore.ipv6Mode
+        val enableIpv6Tun = shouldEnableIpv6Tun(
+            regularIpv6Enabled = ipv6Mode != IPv6Mode.DISABLE,
+            tailscaleEnabled = DataStore.tailscaleEnabled,
+        )
 
         // address
         builder.addAddress(PRIVATE_VLAN4_CLIENT, 30)
-        if (ipv6Mode != IPv6Mode.DISABLE) {
+        if (enableIpv6Tun) {
             builder.addAddress(PRIVATE_VLAN6_CLIENT, 126)
         }
         builder.addDnsServer(PRIVATE_VLAN4_ROUTER)
 
-        // route
-        if (DataStore.bypassLan) {
+        // Tailscale routes include CGNAT, IPv6, user CIDRs, and subnets learned at runtime.
+        // Android's VPN builder cannot update that set later, so capture all traffic while
+        // Tailscale is enabled and let sing-box choose Tailscale, direct, or proxy.
+        val captureAllRoutes = shouldCaptureAllRoutes(
+            bypassLan = DataStore.bypassLan,
+            tailscaleEnabled = DataStore.tailscaleEnabled,
+        )
+        if (!captureAllRoutes) {
             resources.getStringArray(R.array.bypass_private_route).forEach {
                 val subnet = Subnet.fromString(it)!!
                 builder.addRoute(subnet.address.hostAddress!!, subnet.prefixSize)
@@ -113,17 +136,17 @@ class VpnService : BaseVpnService(),
             builder.addRoute(PRIVATE_VLAN4_ROUTER, 32)
             builder.addRoute(FAKEDNS_VLAN4_CLIENT, 15)
             // https://issuetracker.google.com/issues/149636790
-            if (ipv6Mode != IPv6Mode.DISABLE) {
+            if (enableIpv6Tun) {
                 builder.addRoute("2000::", 3)
             }
         } else {
             builder.addRoute("0.0.0.0", 0)
-            if (ipv6Mode != IPv6Mode.DISABLE) {
+            if (enableIpv6Tun) {
                 builder.addRoute("::", 0)
             }
         }
 
-        updateUnderlyingNetwork(builder)
+        updateUnderlyingNetwork(builder = builder)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(metered)
 
         // app route
@@ -199,12 +222,14 @@ class VpnService : BaseVpnService(),
         return conn!!.fd
     }
 
-    fun updateUnderlyingNetwork(builder: Builder? = null) {
+    fun updateUnderlyingNetwork(
+        network: android.net.Network? = SagerNet.underlyingNetwork,
+        builder: Builder? = null,
+    ) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
-            SagerNet.underlyingNetwork?.let {
-                builder?.setUnderlyingNetworks(arrayOf(SagerNet.underlyingNetwork))
-                    ?: setUnderlyingNetworks(arrayOf(SagerNet.underlyingNetwork))
-            }
+            val underlyingNetworks = network?.let { arrayOf(it) }
+            builder?.setUnderlyingNetworks(underlyingNetworks)
+                ?: setUnderlyingNetworks(underlyingNetworks)
         }
     }
 

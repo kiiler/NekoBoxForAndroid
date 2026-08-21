@@ -20,5 +20,11 @@ type BoxPlatformInterface interface {
 	UIDByPackageName(packageName string) (int32, error)
 	WIFIState() string
 	NetworkInterfaces() string
+	StartDefaultInterfaceMonitor(monitorID int64, listener InterfaceUpdateListener) error
+	CloseDefaultInterfaceMonitor(monitorID int64) error
 	SendNotification(identifier, title, body, openURL string) error
+}
+
+type InterfaceUpdateListener interface {
+	UpdateDefaultInterface(interfaceName string, interfaceIndex int32, isExpensive bool, isConstrained bool, forceUpdate bool)
 }

@@ -42,6 +42,7 @@ func TestTailscaleRuntimeConfigDecodes(t *testing.T) {
 			{"type":"direct","tag":"direct"}
 		],
 		"route": {"rules":[
+			{"preferred_by":["tailscale-in"],"outbound":"tailscale-in"},
 			{"domain_suffix":["ts.net"],"outbound":"tailscale-in"},
 			{"ip_cidr":["100.64.0.0/10","fd7a:115c:a1e0::/48"],"outbound":"tailscale-in"},
 			{"ip_is_private":true,"outbound":"direct"}

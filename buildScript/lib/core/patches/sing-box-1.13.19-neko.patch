@@ -346,6 +346,240 @@ index f3f7377b..1cb8b01a 100644
  	return true
  }
  
+diff --git a/protocol/tailscale/default_interface_mobile.go b/protocol/tailscale/default_interface_mobile.go
+new file mode 100644
+index 00000000..65e3bea4
+--- /dev/null
++++ b/protocol/tailscale/default_interface_mobile.go
+@@ -0,0 +1,15 @@
++//go:build android || darwin || ios
++
++package tailscale
++
++import "github.com/sagernet/tailscale/net/netmon"
++
++func (t *Endpoint) updateDefaultRouteInterface() {
++	var interfaceName string
++	if t.network != nil {
++		if defaultInterface := t.network.DefaultNetworkInterface(); defaultInterface != nil {
++			interfaceName = defaultInterface.Name
++		}
++	}
++	netmon.UpdateLastKnownDefaultRouteInterface(interfaceName)
++}
+diff --git a/protocol/tailscale/default_interface_other.go b/protocol/tailscale/default_interface_other.go
+new file mode 100644
+index 00000000..9a0e948e
+--- /dev/null
++++ b/protocol/tailscale/default_interface_other.go
+@@ -0,0 +1,6 @@
++//go:build !android && !darwin && !ios
++
++package tailscale
++
++func (t *Endpoint) updateDefaultRouteInterface() {
++}
+diff --git a/protocol/tailscale/endpoint.go b/protocol/tailscale/endpoint.go
+index 03ec6c9f..44d45795 100644
+--- a/protocol/tailscale/endpoint.go
++++ b/protocol/tailscale/endpoint.go
+@@ -68,6 +68,7 @@ import (
+ var (
+ 	_ adapter.OutboundWithPreferredRoutes = (*Endpoint)(nil)
+ 	_ adapter.DirectRouteOutbound         = (*Endpoint)(nil)
++	_ adapter.InterfaceUpdateListener     = (*Endpoint)(nil)
+ 	_ dialer.PacketDialerWithDestination  = (*Endpoint)(nil)
+ )
+ 
+@@ -299,6 +300,7 @@ func (t *Endpoint) start() error {
+ 				}
+ 			}), nil
+ 		})
++		t.updateDefaultRouteInterface()
+ 	}
+ 	if t.systemInterface {
+ 		mtu := t.systemInterfaceMTU
+@@ -425,6 +427,7 @@ func (t *Endpoint) postStart() error {
+ 	t.filter = localBackend.ExportFilter()
+ 	go t.watchState()
+ 	t.started.Store(true)
++	t.InterfaceUpdated()
+ 	return nil
+ }
+ 
+@@ -506,6 +509,21 @@ func (t *Endpoint) Close() error {
+ 	return err
+ }
+ 
++func (t *Endpoint) InterfaceUpdated() {
++	if !t.started.Load() {
++		return
++	}
++	t.updateDefaultRouteInterface()
++	serverSystem := t.server.Sys()
++	if serverSystem == nil {
++		return
++	}
++	networkMonitor, loaded := serverSystem.NetMon.GetOK()
++	if loaded && networkMonitor != nil {
++		networkMonitor.InjectEvent()
++	}
++}
++
+ func (t *Endpoint) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+ 	switch network {
+ 	case N.NetworkTCP:
+diff --git a/protocol/tailscale/endpoint_interface_darwin_test.go b/protocol/tailscale/endpoint_interface_darwin_test.go
+new file mode 100644
+index 00000000..c2c58d3e
+--- /dev/null
++++ b/protocol/tailscale/endpoint_interface_darwin_test.go
+@@ -0,0 +1,145 @@
++//go:build darwin && with_gvisor
++
++package tailscale
++
++import (
++	"net"
++	"testing"
++	"time"
++
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing/common/control"
++	"github.com/sagernet/tailscale/net/netmon"
++	"github.com/sagernet/tailscale/tsnet"
++)
++
++type endpointTestNetworkManager struct {
++	adapter.NetworkManager
++	defaultInterface *adapter.NetworkInterface
++	interfaceFinder  control.InterfaceFinder
++}
++
++func (m *endpointTestNetworkManager) DefaultNetworkInterface() *adapter.NetworkInterface {
++	return m.defaultInterface
++}
++
++func (m *endpointTestNetworkManager) UpdateInterfaces() error {
++	return nil
++}
++
++func (m *endpointTestNetworkManager) InterfaceFinder() control.InterfaceFinder {
++	return m.interfaceFinder
++}
++
++func (m *endpointTestNetworkManager) AutoRedirectOutputMark() uint32 {
++	return 0
++}
++
++type endpointTestInterfaceFinder struct {
++	control.InterfaceFinder
++	interfaces []control.Interface
++}
++
++func (f *endpointTestInterfaceFinder) Interfaces() []control.Interface {
++	return f.interfaces
++}
++
++type endpointTestPlatformInterface struct {
++	adapter.PlatformInterface
++}
++
++func TestEndpointStartInitializesTailscaleDefaultRouteInterface(t *testing.T) {
++	physicalInterface := testPhysicalInterface(t)
++	controlInterface, err := control.InterfaceFromNet(physicalInterface)
++	if err != nil {
++		t.Fatal(err)
++	}
++	endpoint := &Endpoint{
++		network: &endpointTestNetworkManager{
++			defaultInterface: &adapter.NetworkInterface{Interface: controlInterface},
++			interfaceFinder:  &endpointTestInterfaceFinder{interfaces: []control.Interface{controlInterface}},
++		},
++		platformInterface: &endpointTestPlatformInterface{},
++	}
++	t.Cleanup(func() { netmon.RegisterInterfaceGetter(nil) })
++
++	if err := endpoint.start(); err != nil {
++		t.Fatal(err)
++	}
++	defaultRoute, err := netmon.OSDefaultRoute()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if defaultRoute.InterfaceName != physicalInterface.Name {
++		t.Fatalf("default route interface = %q, want %q", defaultRoute.InterfaceName, physicalInterface.Name)
++	}
++}
++
++func TestEndpointInterfaceUpdatedRefreshesTailscaleNetworkMonitor(t *testing.T) {
++	physicalInterface := testPhysicalInterface(t)
++	server := &tsnet.Server{
++		Dir:       t.TempDir(),
++		Hostname:  "sing-box-interface-update-test",
++		Ephemeral: true,
++		Logf:      t.Logf,
++	}
++	if err := server.Start(); err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = server.Close() })
++
++	networkMonitor, loaded := server.Sys().NetMon.GetOK()
++	if !loaded || networkMonitor == nil {
++		t.Fatal("Tailscale network monitor was not initialized")
++	}
++	changed := make(chan *netmon.ChangeDelta, 1)
++	unregister := networkMonitor.RegisterChangeCallback(func(delta *netmon.ChangeDelta) {
++		changed <- delta
++	})
++	t.Cleanup(unregister)
++
++	endpoint := &Endpoint{
++		network: &endpointTestNetworkManager{defaultInterface: &adapter.NetworkInterface{
++			Interface: control.Interface{
++				Index:        physicalInterface.Index,
++				MTU:          physicalInterface.MTU,
++				Name:         physicalInterface.Name,
++				HardwareAddr: physicalInterface.HardwareAddr,
++				Flags:        physicalInterface.Flags,
++			},
++		}},
++		server: server,
++	}
++	endpoint.started.Store(true)
++	endpoint.InterfaceUpdated()
++
++	select {
++	case delta := <-changed:
++		if delta.New.DefaultRouteInterface != physicalInterface.Name {
++			t.Fatalf("default route interface = %q, want %q", delta.New.DefaultRouteInterface, physicalInterface.Name)
++		}
++	case <-time.After(3 * time.Second):
++		t.Fatal("timed out waiting for injected Tailscale network event")
++	}
++}
++
++func testPhysicalInterface(t *testing.T) net.Interface {
++	t.Helper()
++	interfaces, err := net.Interfaces()
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, networkInterface := range interfaces {
++		if networkInterface.Flags&net.FlagUp == 0 ||
++			networkInterface.Flags&net.FlagLoopback != 0 ||
++			networkInterface.Flags&net.FlagPointToPoint != 0 {
++			continue
++		}
++		addresses, addressErr := networkInterface.Addrs()
++		if addressErr == nil && len(addresses) > 0 {
++			return networkInterface
++		}
++	}
++	t.Skip("missing active physical interface")
++	return net.Interface{}
++}
 diff --git a/protocol/tun/fix_gvisor.go b/protocol/tun/fix_gvisor.go
 new file mode 100644
 index 00000000..214d87cc
@@ -498,4 +732,3 @@ index ee19cc45..d713ef34 100644
  		filePath := filemanager.BasePath(ctx, options.LocalOptions.Path)
  		filePath, _ = filepath.Abs(filePath)
  		err := ruleSet.reloadFile(filePath)
-
