@@ -52,3 +52,32 @@ func TestTailscaleRuntimeConfigDecodes(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMigratedNekoBoxInboundConfigDecodes(t *testing.T) {
+	ctx := box.Context(
+		context.Background(),
+		nekoboxAndroidInboundRegistry(),
+		nekoboxAndroidOutboundRegistry(),
+		nekoboxAndroidEndpointRegistry(),
+		nekoboxAndroidDNSTransportRegistry(nil),
+		nekoboxAndroidServiceRegistry(),
+	)
+	ctx = service.ContextWithDefaultRegistry(ctx)
+	config := []byte(`{
+		"inbounds": [
+			{"type":"tun","tag":"tun-in","stack":"mixed","address":["172.19.0.1/28","fdfe:dcba:9876::1/126"],"mtu":9000},
+			{"type":"mixed","tag":"mixed-in","listen":"127.0.0.1","listen_port":2080}
+		],
+		"outbounds": [{"type":"direct","tag":"direct"}],
+		"route": {"rules":[
+			{"inbound":"tun-in","action":"resolve","strategy":"prefer_ipv4"},
+			{"inbound":"tun-in","action":"sniff"},
+			{"inbound":"mixed-in","action":"sniff"},
+			{"outbound":"direct"}
+		],"final":"direct"}
+	}`)
+	var options option.Options
+	if err := options.UnmarshalJSONContext(ctx, config); err != nil {
+		t.Fatal(err)
+	}
+}
