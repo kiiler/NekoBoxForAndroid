@@ -499,4 +499,23 @@
     <string name="minimize">最小化</string>
     <string name="app_list_permission_denied">无法读取已安装的应用。\n这通常是由于系统限制了应用的读取权限（例如某些中国厂商系统）。\n请在系统设置中授予权限。</string>
     <string name="open_app_settings">打开系统设置</string>
+    <string name="tailscale_settings">Tailscale（sing-box 1.13）</string>
+    <string name="tailscale_enabled">启用 Tailscale</string>
+    <string name="tailscale_enabled_summary">只向临时运行配置注入 Tailscale。代理流量与 Tailnet 流量使用独立路由。</string>
+    <string name="tailscale_auth_key">Auth Key</string>
+    <string name="tailscale_auth_key_summary">可留空。启动后点击授权通知，通过浏览器登录。</string>
+    <string name="tailscale_hostname">设备名称</string>
+    <string name="tailscale_control_url">控制服务器 URL</string>
+    <string name="tailscale_control_url_summary">留空时使用 Tailscale 官方控制服务器。</string>
+    <string name="tailscale_accept_routes">接受子网路由</string>
+    <string name="tailscale_magic_dns">启用 Tailscale MagicDNS</string>
+    <string name="tailscale_magic_dns_summary">仅 Tailnet 名称使用 Tailscale DNS。普通代理 DNS 和 Fake-IP 保持不变。</string>
+    <string name="tailscale_route_cidrs">附加 Tailnet 子网 CIDR</string>
+    <string name="tailscale_route_cidrs_summary">使用逗号或换行分隔。无效 CIDR 会被忽略。</string>
+    <string name="tailscale_replace_existing">覆盖原有 Tailscale 配置</string>
+    <string name="tailscale_replace_existing_summary">从临时运行配置中移除其他 Tailscale endpoint 和 DNS 服务器。</string>
+    <string name="tailscale_status_disabled">已停用</string>
+    <string name="tailscale_status_running">已启用 · 正随代理内核运行</string>
+    <string name="tailscale_status_next_start">已启用 · 将在下次启动代理时连接</string>
+    <string name="tailscale_authentication">Tailscale 授权</string>
 </resources>

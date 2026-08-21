@@ -16,11 +16,9 @@ import (
 	"github.com/matsuridayo/libneko/speedtest"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/boxapi"
-	"github.com/sagernet/sing-box/experimental/libbox/platform"
 	"github.com/sagernet/sing-box/protocol/group"
 
 	box "github.com/sagernet/sing-box"
-	"github.com/sagernet/sing-box/common/conntrack"
 	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
@@ -60,7 +58,9 @@ func VersionBox() string {
 
 func ResetAllConnections(system bool) {
 	if system {
-		conntrack.Close()
+		if mainInstance != nil && mainInstance.connectionManager != nil {
+			mainInstance.connectionManager.CloseAll()
+		}
 		log.Println("Reset system connections done")
 	} else {
 		log.Println("TODO: Reset user connections")
@@ -74,9 +74,10 @@ type BoxInstance struct {
 	cancel context.CancelFunc
 	state  int
 
-	v2api        *boxapi.SbV2rayServer
-	selector     *group.Selector
-	pauseManager pause.Manager
+	v2api             *boxapi.SbV2rayServer
+	selector          *group.Selector
+	pauseManager      pause.Manager
+	connectionManager adapter.ConnectionManager
 }
 
 func NewSingBoxInstance(config string, localTransport LocalDNSTransport) (b *BoxInstance, err error) {
@@ -89,7 +90,7 @@ func NewSingBoxInstance(config string, localTransport LocalDNSTransport) (b *Box
 		nekoboxAndroidDNSTransportRegistry(localTransport), nekoboxAndroidServiceRegistry(),
 	)
 	ctx = service.ContextWithDefaultRegistry(ctx)
-	service.MustRegister[platform.Interface](ctx, boxPlatformInterfaceInstance)
+	service.MustRegister[adapter.PlatformInterface](ctx, boxPlatformInterfaceInstance)
 
 	// parse options
 	var options option.Options
@@ -110,9 +111,10 @@ func NewSingBoxInstance(config string, localTransport LocalDNSTransport) (b *Box
 	}
 
 	b = &BoxInstance{
-		Box:          instance,
-		cancel:       cancel,
-		pauseManager: service.FromContext[pause.Manager](ctx),
+		Box:               instance,
+		cancel:            cancel,
+		pauseManager:      service.FromContext[pause.Manager](ctx),
+		connectionManager: service.FromContext[adapter.ConnectionManager](ctx),
 	}
 
 	// selector

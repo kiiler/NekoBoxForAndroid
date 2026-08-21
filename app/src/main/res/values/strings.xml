@@ -579,4 +579,24 @@
     <string name="minimize">Minimize</string>
     <string name="app_list_permission_denied">Unable to read installed apps.\nThis is usually because the system has restricted app read permissions.\nPlease grant permissions in the system settings.</string>
     <string name="open_app_settings">Open System Settings</string>
+    <string name="tailscale" translatable="false">Tailscale</string>
+    <string name="tailscale_settings">Tailscale (sing-box 1.13)</string>
+    <string name="tailscale_enabled">Enable Tailscale</string>
+    <string name="tailscale_enabled_summary">Inject Tailscale only into the runtime config. Proxy traffic and Tailnet traffic use separate routes.</string>
+    <string name="tailscale_auth_key">Auth key</string>
+    <string name="tailscale_auth_key_summary">Optional. Leave empty to sign in from the authentication notification.</string>
+    <string name="tailscale_hostname">Device name</string>
+    <string name="tailscale_control_url">Control server URL</string>
+    <string name="tailscale_control_url_summary">Leave empty to use the official Tailscale control server.</string>
+    <string name="tailscale_accept_routes">Accept subnet routes</string>
+    <string name="tailscale_magic_dns">Enable MagicDNS</string>
+    <string name="tailscale_magic_dns_summary">Only Tailnet names use Tailscale DNS. Normal proxy DNS and Fake-IP remain unchanged.</string>
+    <string name="tailscale_route_cidrs">Additional Tailnet subnet CIDRs</string>
+    <string name="tailscale_route_cidrs_summary">Separate CIDRs with commas or new lines. Invalid values are ignored.</string>
+    <string name="tailscale_replace_existing">Replace existing Tailscale config</string>
+    <string name="tailscale_replace_existing_summary">Remove other Tailscale endpoints and DNS servers from the generated runtime config.</string>
+    <string name="tailscale_status_disabled">Disabled</string>
+    <string name="tailscale_status_running">Enabled · running with the proxy core</string>
+    <string name="tailscale_status_next_start">Enabled · connects on the next proxy start</string>
+    <string name="tailscale_authentication">Tailscale authentication</string>
 </resources>

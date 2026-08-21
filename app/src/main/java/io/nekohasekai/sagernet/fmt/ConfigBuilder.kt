@@ -66,8 +66,18 @@ fun buildConfig(
     if (proxy.type == TYPE_CONFIG) {
         val bean = proxy.requireBean() as ConfigBean
         if (bean.type == 0) {
+            val config = if (!forTest && !forExport) {
+                @Suppress("UNCHECKED_CAST")
+                val configMap = gson.fromJson(bean.config, MutableMap::class.java)
+                    as MutableMap<String, Any?>
+                SingBoxConfigCompat.migrate(configMap)
+                if (DataStore.tailscaleEnabled) TailscaleConfigOverlay.apply(configMap)
+                gson.toJson(configMap)
+            } else {
+                bean.config
+            }
             return ConfigBuildResult(
-                bean.config,
+                config,
                 listOf(),
                 proxy.id, //
                 mapOf(TAG_PROXY to listOf(proxy)), //
@@ -742,6 +752,8 @@ fun buildConfig(
     }.let {
         val configMap = it.asMap()
         Util.mergeJSON(configMap, proxy.requireBean().customConfigJson)
+        SingBoxConfigCompat.migrate(configMap)
+        if (!forTest && !forExport) TailscaleConfigOverlay.apply(configMap)
         ConfigBuildResult(
             gson.toJson(configMap),
             externalIndexMap,

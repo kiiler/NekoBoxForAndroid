@@ -184,6 +184,10 @@ class SagerNet : Application(),
                             "connection-test",
                             application.getText(R.string.connection_test),
                             NotificationManager.IMPORTANCE_DEFAULT
+                        ), NotificationChannel(
+                            "tailscale-authentication",
+                            application.getText(R.string.tailscale_authentication),
+                            NotificationManager.IMPORTANCE_DEFAULT
                         )
                     )
                 )

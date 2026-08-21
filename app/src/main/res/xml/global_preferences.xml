@@ -96,6 +96,45 @@
             app:useSimpleSummaryProvider="true" />
     </PreferenceCategory>
 
+    <PreferenceCategory app:title="@string/tailscale_settings">
+        <SwitchPreference
+            app:defaultValue="false"
+            app:icon="@drawable/baseline_public_24"
+            app:key="tailscaleEnabled"
+            app:summary="@string/tailscale_enabled_summary"
+            app:title="@string/tailscale_enabled" />
+        <EditTextPreference
+            app:key="tailscaleAuthKey"
+            app:summary="@string/tailscale_auth_key_summary"
+            app:title="@string/tailscale_auth_key" />
+        <EditTextPreference
+            app:key="tailscaleHostname"
+            app:title="@string/tailscale_hostname"
+            app:useSimpleSummaryProvider="true" />
+        <EditTextPreference
+            app:key="tailscaleControlUrl"
+            app:summary="@string/tailscale_control_url_summary"
+            app:title="@string/tailscale_control_url" />
+        <SwitchPreference
+            app:defaultValue="true"
+            app:key="tailscaleAcceptRoutes"
+            app:title="@string/tailscale_accept_routes" />
+        <SwitchPreference
+            app:defaultValue="true"
+            app:key="tailscaleMagicDns"
+            app:summary="@string/tailscale_magic_dns_summary"
+            app:title="@string/tailscale_magic_dns" />
+        <EditTextPreference
+            app:key="tailscaleRouteCidrs"
+            app:summary="@string/tailscale_route_cidrs_summary"
+            app:title="@string/tailscale_route_cidrs" />
+        <SwitchPreference
+            app:defaultValue="true"
+            app:key="tailscaleReplaceExisting"
+            app:summary="@string/tailscale_replace_existing_summary"
+            app:title="@string/tailscale_replace_existing" />
+    </PreferenceCategory>
+
     <PreferenceCategory app:title="@string/cag_route">
         <SwitchPreference
             app:icon="@drawable/ic_navigation_apps"

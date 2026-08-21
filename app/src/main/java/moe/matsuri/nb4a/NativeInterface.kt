@@ -1,11 +1,17 @@
 package moe.matsuri.nb4a
 
 import android.content.Context
+import android.content.Intent
+import android.app.PendingIntent
+import android.net.Uri
 import android.net.ConnectivityManager
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Build.VERSION_CODES
 import androidx.annotation.RequiresApi
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.bg.ServiceNotification
 import io.nekohasekai.sagernet.database.DataStore
@@ -73,6 +79,31 @@ class NativeInterface : BoxPlatformInterface, NB4AInterface {
             app.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         val connectionInfo = wifiManager.connectionInfo
         return "${connectionInfo.ssid},${connectionInfo.bssid}"
+    }
+
+    override fun sendNotification(
+        identifier: String,
+        title: String,
+        body: String,
+        openURL: String,
+    ) {
+        val contentIntent = openURL.takeIf { it.isNotBlank() }?.let { url ->
+            PendingIntent.getActivity(
+                app,
+                identifier.hashCode(),
+                Intent(Intent.ACTION_VIEW, Uri.parse(url)),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        }
+        val notification = NotificationCompat.Builder(app, "tailscale-authentication")
+            .setSmallIcon(R.drawable.ic_service_active)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setContentIntent(contentIntent)
+            .setAutoCancel(true)
+            .build()
+        NotificationManagerCompat.from(app).notify(identifier.hashCode(), notification)
     }
 
     // nb4a interface

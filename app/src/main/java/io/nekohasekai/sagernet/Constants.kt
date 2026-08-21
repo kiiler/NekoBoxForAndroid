@@ -18,6 +18,15 @@ object Key {
 
     const val GLOBAL_CUSTOM_CONFIG = "globalCustomConfig"
 
+    const val TAILSCALE_ENABLED = "tailscaleEnabled"
+    const val TAILSCALE_AUTH_KEY = "tailscaleAuthKey"
+    const val TAILSCALE_HOSTNAME = "tailscaleHostname"
+    const val TAILSCALE_CONTROL_URL = "tailscaleControlUrl"
+    const val TAILSCALE_ACCEPT_ROUTES = "tailscaleAcceptRoutes"
+    const val TAILSCALE_MAGIC_DNS = "tailscaleMagicDns"
+    const val TAILSCALE_ROUTE_CIDRS = "tailscaleRouteCidrs"
+    const val TAILSCALE_REPLACE_EXISTING = "tailscaleReplaceExisting"
+
     const val REMOTE_DNS = "remoteDns"
     const val DIRECT_DNS = "directDns"
     const val ENABLE_DNS_ROUTING = "enableDnsRouting"

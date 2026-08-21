@@ -3,6 +3,7 @@ package io.nekohasekai.sagernet.ui
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.text.InputType
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
@@ -77,6 +78,28 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         val directDns = findPreference<EditTextPreference>(Key.DIRECT_DNS)!!
         val enableDnsRouting = findPreference<SwitchPreference>(Key.ENABLE_DNS_ROUTING)!!
         val enableFakeDns = findPreference<SwitchPreference>(Key.ENABLE_FAKEDNS)!!
+
+        val tailscalePreferences = listOf(
+            Key.TAILSCALE_ENABLED,
+            Key.TAILSCALE_AUTH_KEY,
+            Key.TAILSCALE_HOSTNAME,
+            Key.TAILSCALE_CONTROL_URL,
+            Key.TAILSCALE_ACCEPT_ROUTES,
+            Key.TAILSCALE_MAGIC_DNS,
+            Key.TAILSCALE_ROUTE_CIDRS,
+            Key.TAILSCALE_REPLACE_EXISTING,
+        ).map { findPreference<Preference>(it)!! }
+        findPreference<EditTextPreference>(Key.TAILSCALE_AUTH_KEY)!!
+            .setOnBindEditTextListener { editText ->
+                editText.inputType = InputType.TYPE_CLASS_TEXT or
+                    InputType.TYPE_TEXT_VARIATION_PASSWORD
+            }
+        findPreference<EditTextPreference>(Key.TAILSCALE_ROUTE_CIDRS)!!
+            .setOnBindEditTextListener { editText ->
+                editText.inputType = InputType.TYPE_CLASS_TEXT or
+                    InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                editText.setSingleLine(false)
+            }
 
         val logLevel = findPreference<LongClickListPreference>(Key.LOG_LEVEL)!!
         val mtu = findPreference<MTUPreference>(Key.MTU)!!
@@ -168,6 +191,7 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         tunImplementation.onPreferenceChangeListener = reloadListener
         acquireWakeLock.onPreferenceChangeListener = reloadListener
         globalCustomConfig.onPreferenceChangeListener = reloadListener
+        tailscalePreferences.forEach { it.onPreferenceChangeListener = reloadListener }
     }
 
     override fun onResume() {

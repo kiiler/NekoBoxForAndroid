@@ -36,6 +36,7 @@ import androidx.viewpager2.widget.ViewPager2
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
+import com.google.android.material.switchmaterial.SwitchMaterial
 import io.nekohasekai.sagernet.GroupOrder
 import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.Key
@@ -130,6 +131,9 @@ class ConfigurationFragment @JvmOverloads constructor(
     lateinit var adapter: GroupPagerAdapter
     lateinit var tabLayout: TabLayout
     lateinit var groupPager: ViewPager2
+    private lateinit var tailscaleSwitch: SwitchMaterial
+    private lateinit var tailscaleSummary: TextView
+    private var updatingTailscaleSwitch = false
 
     val alwaysShowAddress by lazy { DataStore.alwaysShowAddress }
 
@@ -183,6 +187,23 @@ class ConfigurationFragment @JvmOverloads constructor(
             toolbar.setNavigationIcon(R.drawable.ic_navigation_close)
             toolbar.setNavigationOnClickListener {
                 requireActivity().finish()
+            }
+        }
+
+        val tailscalePanel = view.findViewById<View>(R.id.tailscale_panel)
+        tailscalePanel.isGone = select
+        if (!select) {
+            tailscaleSwitch = view.findViewById(R.id.tailscale_switch)
+            tailscaleSummary = view.findViewById(R.id.tailscale_summary)
+            updateTailscaleSummary()
+            tailscaleSwitch.setOnCheckedChangeListener { _, enabled ->
+                if (updatingTailscaleSwitch) return@setOnCheckedChangeListener
+                DataStore.tailscaleEnabled = enabled
+                updateTailscaleSummary()
+                if (DataStore.serviceState.started) SagerNet.reloadService()
+            }
+            tailscalePanel.setOnClickListener {
+                (activity as? MainActivity)?.displayFragmentWithId(R.id.nav_settings)
             }
         }
 
@@ -241,6 +262,25 @@ class ConfigurationFragment @JvmOverloads constructor(
         }
 
         DataStore.profileCacheStore.registerChangeListener(this)
+    }
+
+    fun updateTailscaleSummary() {
+        if (!::tailscaleSwitch.isInitialized) return
+        updatingTailscaleSwitch = true
+        tailscaleSwitch.isChecked = DataStore.tailscaleEnabled
+        updatingTailscaleSwitch = false
+        tailscaleSummary.setText(
+            when {
+                !DataStore.tailscaleEnabled -> R.string.tailscale_status_disabled
+                DataStore.serviceState.started -> R.string.tailscale_status_running
+                else -> R.string.tailscale_status_next_start
+            },
+        )
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updateTailscaleSummary()
     }
 
     override fun onPreferenceDataStoreChanged(store: PreferenceDataStore, key: String) {

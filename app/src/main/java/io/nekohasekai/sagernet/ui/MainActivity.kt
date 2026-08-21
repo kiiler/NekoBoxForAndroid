@@ -366,6 +366,8 @@ class MainActivity : ThemedActivity(),
 
         binding.fab.changeState(state, DataStore.serviceState, animate)
         binding.stats.changeState(state)
+        (supportFragmentManager.findFragmentById(R.id.fragment_holder) as? ConfigurationFragment)
+            ?.updateTailscaleSummary()
         if (msg != null) snackbar(getString(R.string.vpn_error, msg)).show()
     }
 

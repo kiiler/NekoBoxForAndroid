@@ -113,6 +113,15 @@ object DataStore : OnPreferenceDataStoreChangeListener {
 
     var globalCustomConfig by configurationStore.string(Key.GLOBAL_CUSTOM_CONFIG) { "" }
 
+    var tailscaleEnabled by configurationStore.boolean(Key.TAILSCALE_ENABLED)
+    var tailscaleAuthKey by configurationStore.string(Key.TAILSCALE_AUTH_KEY) { "" }
+    var tailscaleHostname by configurationStore.string(Key.TAILSCALE_HOSTNAME) { "" }
+    var tailscaleControlUrl by configurationStore.string(Key.TAILSCALE_CONTROL_URL) { "" }
+    var tailscaleAcceptRoutes by configurationStore.boolean(Key.TAILSCALE_ACCEPT_ROUTES) { true }
+    var tailscaleMagicDns by configurationStore.boolean(Key.TAILSCALE_MAGIC_DNS) { true }
+    var tailscaleRouteCidrs by configurationStore.string(Key.TAILSCALE_ROUTE_CIDRS) { "" }
+    var tailscaleReplaceExisting by configurationStore.boolean(Key.TAILSCALE_REPLACE_EXISTING) { true }
+
     var remoteDns by configurationStore.string(Key.REMOTE_DNS) { "https://dns.google/dns-query" }
     var directDns by configurationStore.string(Key.DIRECT_DNS) { "https://223.5.5.5/dns-query" }
     var enableDnsRouting by configurationStore.boolean(Key.ENABLE_DNS_ROUTING) { true }
