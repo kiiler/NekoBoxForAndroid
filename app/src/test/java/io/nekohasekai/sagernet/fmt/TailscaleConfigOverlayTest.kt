@@ -9,6 +9,49 @@ import org.junit.Test
 class TailscaleConfigOverlayTest {
 
     @Test
+    fun localTailscaleServicesBypassProxyEvenWhenLanBypassIsDisabled() {
+        val config = baseConfig()
+        config["route"] = linkedMapOf(
+            "final" to "proxy",
+            "rules" to listOf(mapOf("network" to "tcp", "outbound" to "proxy")),
+        )
+        TailscaleConfigOverlay.apply(
+            config,
+            TailscaleConfigOverlay.Settings(enabled = true, bypassLan = false),
+        )
+        // The endpoint maps this node's tailnet address to loopback before routing.
+        // This rule must win over catch-all proxy rules for both IPv4 and IPv6.
+        val first = objectList(objectMap(config["route"])["rules"]).first()
+        assertEquals(listOf(TailscaleConfigOverlay.ENDPOINT_TAG), first["inbound"])
+        assertEquals(listOf("127.0.0.1/32", "::1/128"), first["ip_cidr"])
+        assertEquals("direct", first["outbound"])
+        assertFalse(first.containsKey("port")) // ADB is one example, not the only local service.
+        assertEquals("proxy", objectMap(config["route"])["final"])
+        assertFalse(objectList(objectMap(config["route"])["rules"]).any {
+            it["ip_is_private"] == true
+        })
+    }
+
+    @Test
+    fun localServiceRuleCreatesDirectOutboundWithoutReplacingProxyTag() {
+        val config = baseConfig()
+        config["outbounds"] = listOf(
+            mapOf("type" to "socks", "tag" to "direct", "server" to "proxy.example"),
+            mapOf("type" to "selector", "tag" to "proxy", "outbounds" to listOf("direct")),
+        )
+        val settings = TailscaleConfigOverlay.Settings(enabled = true, bypassLan = false)
+        TailscaleConfigOverlay.apply(config, settings)
+        val once = config.toString()
+        TailscaleConfigOverlay.apply(config, settings)
+        assertEquals(once, config.toString())
+        val rule = objectList(objectMap(config["route"])["rules"]).first()
+        val outbound = objectList(config["outbounds"]).single { it["tag"] == rule["outbound"] }
+        assertEquals("direct", outbound["type"])
+        assertEquals("tailscale-direct", outbound["tag"])
+        assertEquals("socks", objectList(config["outbounds"]).single { it["tag"] == "direct" }["type"])
+    }
+
+    @Test
     fun disabledLeavesConfigUnchanged() {
         val config = baseConfig()
         val before = config.toString()
@@ -103,7 +146,7 @@ class TailscaleConfigOverlayTest {
                 "preferred_by" to listOf(TailscaleConfigOverlay.ENDPOINT_TAG),
                 "outbound" to TailscaleConfigOverlay.ENDPOINT_TAG,
             ),
-            routeRules.first(),
+            routeRules.first { it["inbound"] == null },
         )
         val staticTailscaleIndex = routeRules.indexOfFirst {
             it["outbound"] == TailscaleConfigOverlay.ENDPOINT_TAG && it["ip_cidr"] != null
