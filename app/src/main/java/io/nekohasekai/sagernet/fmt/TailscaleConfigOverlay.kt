@@ -39,7 +39,7 @@ object TailscaleConfigOverlay {
     fun apply(config: MutableMap<String, Any?>, settings: Settings = currentSettings()) {
         if (!settings.enabled) return
 
-        val directTag = if (settings.bypassLan) ensureDirectOutbound(config) else null
+        val directTag = ensureDirectOutbound(config)
 
         val endpoints = mutableObjectList(config["endpoints"])
         val removedEndpointTags = endpoints.mapNotNull { endpoint ->
@@ -97,9 +97,19 @@ object TailscaleConfigOverlay {
                 ),
             )
         }
+        // sing-box rewrites this node's tailnet IP to loopback before routing.
+        // Keep local services on-device even when LAN bypass is disabled or the
+        // user's rules send all TCP traffic to a proxy. Do not bypass transit traffic.
+        putRuleFirst(
+            routeRules,
+            linkedMapOf(
+                "inbound" to listOf(ENDPOINT_TAG),
+                "ip_cidr" to listOf("127.0.0.1/32", "::1/128"),
+                "outbound" to directTag,
+            ),
+        )
         if (
             settings.bypassLan &&
-            directTag != null &&
             routeRules.none { isGlobalPrivateDirectRule(it, directTag) }
         ) {
             routeRules += linkedMapOf(
